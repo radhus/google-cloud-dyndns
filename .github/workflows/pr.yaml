@@ -20,4 +20,4 @@ jobs:
       - name: build
         run: go build .
       - name: lint
-        uses: reviewdog/action-golangci-lint@v1
+        uses: reviewdog/action-golangci-lint@v2
