@@ -5,12 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"time"
 
 	dns "google.golang.org/api/dns/v1"
 )
@@ -22,6 +24,7 @@ var (
 	host    = flag.String("host", "", "Host to update (required)")
 	project = flag.String("project", "", "GCP project (required)")
 	zoneID  = flag.String("zone", "", "GCP Zone ID (required)")
+	timeout = flag.String("timeout", "30s", "Total timeout")
 )
 
 func usageExit(err string) {
@@ -42,6 +45,15 @@ func main() {
 	}
 
 	logger := log.New(os.Stdout, fmt.Sprintf("[%s] ", *host), 0)
+
+	timeoutDuration, err := time.ParseDuration(*timeout)
+	if err != nil {
+		usageExit(fmt.Sprintf("-timeout couldn't be parsed: %s", err.Error()))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
+	defer cancel()
+	ctx, cancel = signal.NotifyContext(ctx, os.Interrupt)
+	defer cancel()
 
 	var wantedAddress string
 	switch {
@@ -67,7 +79,11 @@ func main() {
 		wantedAddress = ifaceIP.String()
 
 	case *query:
-		res, err := http.Get("https://api.ipify.org")
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.ipify.org", nil)
+		if err != nil {
+			logger.Fatalln("Failed to create request:", err)
+		}
+		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			logger.Fatalln("Failed to query api.ipify.org:", err)
 		}
@@ -75,7 +91,7 @@ func main() {
 			logger.Fatalln("Weird status code from api.ipify.org:", res.StatusCode)
 		}
 
-		body, err := ioutil.ReadAll(res.Body)
+		body, err := io.ReadAll(res.Body)
 		if err != nil {
 			logger.Fatalln("Failed to read response body:", err)
 		}
@@ -90,8 +106,6 @@ func main() {
 		logger.Fatalln("Couldn't parse address as valid IP:", wantedAddress)
 	}
 	logger.Println("Using address:", wantedAddress)
-
-	ctx := context.Background()
 
 	dnsService, err := dns.NewService(ctx)
 	if err != nil {
